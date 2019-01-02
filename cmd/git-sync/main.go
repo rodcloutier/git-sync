@@ -72,6 +72,9 @@ var flSSHKnownHosts = flag.Bool("ssh-known-hosts", envBool("GIT_KNOWN_HOSTS", tr
 var flCookieFile = flag.Bool("cookie-file", envBool("GIT_COOKIE_FILE", false),
 	"use git cookiefile")
 
+var flSubmoduleUpdate = flag.Bool("update-submodule", envBool("GIT_SYNC_SUBMODULE", false),
+	"sync submodule(s)")
+
 var log = newLoggerOrDie()
 
 func newLoggerOrDie() logr.Logger {
@@ -181,7 +184,7 @@ func main() {
 	initialSync := true
 	failCount := 0
 	for {
-		if err := syncRepo(*flRepo, *flBranch, *flRev, *flDepth, *flRoot, *flDest); err != nil {
+		if err := syncRepo(*flRepo, *flBranch, *flRev, *flDepth, *flRoot, *flDest, *flSubmoduleUpdate); err != nil {
 			if initialSync || failCount >= *flMaxSyncFailures {
 				log.Errorf("error syncing repo: %v", err)
 				os.Exit(1)
@@ -281,12 +284,20 @@ func updateSymlink(gitRoot, link, newDir string) error {
 }
 
 // addWorktreeAndSwap creates a new worktree and calls updateSymlink to swap the symlink to point to the new worktree
-func addWorktreeAndSwap(gitRoot, dest, branch, rev, hash string) error {
+func addWorktreeAndSwap(gitRoot, dest, branch, rev, hash string, submoduleUpdate bool) error {
 	log.V(0).Infof("syncing to %s (%s)", rev, hash)
 
 	// Update from the remote.
 	if _, err := runCommand(gitRoot, "git", "fetch", "--tags", "origin", branch); err != nil {
 		return err
+	}
+
+	// Update submodule if requested
+	if submoduleUpdate {
+		log.V(0).Infof("updating submodules")
+		if _, err := runCommand(gitRoot, "git", "submodule", "update", "--init", "--remote"); err != nil {
+			return err
+		}
 	}
 
 	// Make a worktree for this exact git hash.
@@ -377,7 +388,7 @@ func revIsHash(rev, gitRoot string) (bool, error) {
 }
 
 // syncRepo syncs the branch of a given repository to the destination at the given rev.
-func syncRepo(repo, branch, rev string, depth int, gitRoot, dest string) error {
+func syncRepo(repo, branch, rev string, depth int, gitRoot, dest string, submoduleUpdate bool) error {
 	target := path.Join(gitRoot, dest)
 	gitRepoPath := path.Join(target, ".git")
 	hash := rev
@@ -410,7 +421,7 @@ func syncRepo(repo, branch, rev string, depth int, gitRoot, dest string) error {
 		}
 	}
 
-	return addWorktreeAndSwap(gitRoot, dest, branch, rev, hash)
+	return addWorktreeAndSwap(gitRoot, dest, branch, rev, hash, submoduleUpdate)
 }
 
 // getRevs returns the local and upstream hashes for rev.
